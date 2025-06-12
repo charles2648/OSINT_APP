@@ -1,0 +1,16 @@
+[project]
+name = "fastapi-ai-worker"
+version = "0.1.0"
+description = "AI Worker service for the OSINT app, runs LangGraph agent."
+authors = [{ name = "Your Name", email = "you@example.com" }]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "langgraph>=0.0.57",
+    "langchain-openai>=0.1.8",
+    "langchain-anthropic>=0.1.15",
+    "python-dotenv>=1.0.1",
+    "tavily-python>=0.3.3",
+    "python-whois>=0.8.0"
+]

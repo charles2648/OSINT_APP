@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced OSINT Agent</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛡️ Advanced OSINT Agent</h1>
+            <p>An intelligent research agent with long-term memory and factual verification.</p>
+        </header>
+
+        <main>
+            <div id="input-section">
+                <h2>1. Start a New Research Case</h2>
+                <div class="config-grid">
+                    <div class="config-item">
+                        <label for="llm-model-select">AI Model</label>
+                        <select id="llm-model-select" title="Select the AI model for research"></select>
+                    </div>
+                    <div class="config-item">
+                        <label for="temperature-slider">Creativity (Temperature)</label>
+                        <div class="slider-container">
+                            <input type="range" id="temperature-slider" min="0" max="1" step="0.1" value="0.7" title="Adjust model creativity">
+                            <span id="temperature-value">0.7</span>
+                        </div>
+                    </div>
+                </div>
+                <textarea id="research-topic" placeholder="e.g., 'Cybersecurity posture of example.com'"></textarea>
+                <button id="start-research-btn">Start Research</button>
+            </div>
+
+            <div id="status-section" class="hidden">
+                <h2>2. Agent Live Feed</h2>
+                <div id="live-log" class="log-box"></div>
+            </div>
+
+            <div id="review-section" class="hidden">
+                <h2>3. Review Verified Findings</h2>
+                <div id="findings-display" class="findings-box"></div>
+                <div class="review-actions">
+                    <button id="approve-btn">👍 Approve & Store Memory</button>
+                    <button id="reject-btn">👎 Reject Findings</button>
+                </div>
+            </div>
+            
+            <div id="completion-section" class="hidden">
+                 <h2>4. Task Complete</h2>
+                 <p id="completion-message"></p>
+                 <a id="download-link" class="hidden" href="#" target="_blank" download>Download Report 📥</a>
+            </div>
+        </main>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>

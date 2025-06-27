@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <h1>🛡️ Advanced OSINT Agent</h1>
-            <p>An intelligent research agent with long-term memory and factual verification.</p>
+            <p>An intelligent research agent with advanced verification capabilities and comprehensive intelligence reporting.</p>
         </header>
 
         <main>
@@ -29,28 +29,29 @@
                         </div>
                     </div>
                 </div>
-                <textarea id="research-topic" placeholder="e.g., 'Cybersecurity posture of example.com'"></textarea>
-                <button id="start-research-btn">Start Research</button>
+                <textarea id="research-topic" placeholder="Enter your OSINT investigation target (e.g., 'Cybersecurity assessment of example.com', 'Social media profile analysis for @username', 'Domain reputation check for suspicious-site.com')" title="Describe what you want to investigate"></textarea>
+                <button id="start-research-btn">🚀 Start OSINT Investigation</button>
+                <p class="help-text">💡 <strong>Tip:</strong> Use Ctrl/Cmd + Enter to start, Ctrl/Cmd + S to export investigation log</p>
             </div>
 
             <div id="status-section" class="hidden">
-                <h2>2. Agent Live Feed</h2>
+                <h2>2. Investigation Progress</h2>
                 <div id="live-log" class="log-box"></div>
             </div>
 
             <div id="review-section" class="hidden">
-                <h2>3. Review Verified Findings</h2>
+                <h2>3. Intelligence Assessment Review</h2>
                 <div id="findings-display" class="findings-box"></div>
                 <div class="review-actions">
-                    <button id="approve-btn">👍 Approve & Store Memory</button>
-                    <button id="reject-btn">👎 Reject Findings</button>
+                    <button id="approve-btn">✅ Approve & Store in Memory</button>
+                    <button id="reject-btn">❌ Reject Assessment</button>
                 </div>
             </div>
             
             <div id="completion-section" class="hidden">
-                 <h2>4. Task Complete</h2>
-                 <p id="completion-message"></p>
-                 <a id="download-link" class="hidden" href="#" target="_blank" download>Download Report 📥</a>
+                 <h2>4. Investigation Complete</h2>
+                 <div id="completion-message"></div>
+                 <a id="download-link" class="hidden" href="#" target="_blank" download>📥 Download Report</a>
             </div>
         </main>
     </div>

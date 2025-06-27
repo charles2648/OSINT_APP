@@ -1,16 +1,245 @@
 [project]
 name = "fastapi-ai-worker"
 version = "0.1.0"
-description = "AI Worker service for the OSINT app, runs LangGraph agent."
-authors = [{ name = "Your Name", email = "you@example.com" }]
+description = "Advanced OSINT Agent with LangGraph, MCP tools, and Langfuse tracking"
+authors = [{ name = "OSINT Team", email = "osint@example.com" }]
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.12,<3.13"
+keywords = ["osint", "intelligence", "langraph", "fastapi", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+
 dependencies = [
-    "fastapi>=0.111.0",
-    "uvicorn[standard]>=0.29.0",
-    "langgraph>=0.0.57",
-    "langchain-openai>=0.1.8",
-    "langchain-anthropic>=0.1.15",
+    # Web framework and server
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.10.0",
+    
+    # LangChain and LangGraph ecosystem
+    "langgraph>=0.2.50",
+    "langchain-core>=0.3.20",
+    "langchain-openai>=0.2.10",
+    "langchain-anthropic>=0.2.5",
+    "langchain-community>=0.3.10",
+    
+    # Environment and configuration
     "python-dotenv>=1.0.1",
-    "tavily-python>=0.3.3",
-    "python-whois>=0.8.0"
+    
+    # Search and web scraping
+    "tavily-python>=0.5.0",
+    "requests>=2.32.0",
+    
+    # OSINT and network analysis tools
+    "python-whois>=0.9.4",
+    "dnspython>=2.7.0",
+    "phonenumbers>=8.13.50",
+    
+    # Image processing and metadata extraction
+    "Pillow>=11.0.0",
+    
+    # Tracking and observability
+    "langfuse>=2.55.0",
+    
+    # Data processing and utilities
+    "pydantic-settings>=2.6.0",
+    "httpx>=0.28.0",
+    "aiofiles>=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    
+    # Code quality
+    "black>=24.10.0",
+    "isort>=5.13.0",
+    "flake8>=7.1.0",
+    "mypy>=1.13.0",
+    
+    # Development tools
+    "pre-commit>=4.0.0",
+    "ipython>=8.29.0",
+    "jupyter>=1.1.0",
+]
+
+test = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    "httpx>=0.28.0",
+]
+
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.27.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/osint-app"
+Documentation = "https://github.com/your-org/osint-app/docs"
+Repository = "https://github.com/your-org/osint-app"
+Issues = "https://github.com/your-org/osint-app/issues"
+
+[project.scripts]
+osint-agent = "app.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.uv]
+dev-dependencies = [
+    # Testing
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    
+    # Code quality
+    "black>=24.10.0",
+    "isort>=5.13.0",
+    "flake8>=7.1.0",
+    "mypy>=1.13.0",
+    
+    # Development tools
+    "pre-commit>=4.0.0",
+    "ipython>=8.29.0",
+    "jupyter>=1.1.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=app",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml",
+]
+testpaths = ["tests"]
+filterwarnings = [
+    "error",
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.black]
+target-version = ["py312"]
+line-length = 100
+skip-string-normalization = true
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # Directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 100
+known_first_party = ["app"]
+skip = ["__init__.py"]
+extend_skip_glob = ["*.pyi"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_any_generics = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+no_implicit_reexport = true
+strict_equality = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unreachable = true
+warn_unused_configs = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = [
+    "whois.*",
+    "tavily.*",
+    "langfuse.*",
+    "phonenumbers.*",
+    "dns.*",
+]
+ignore_missing_imports = true
+
+[tool.flake8]
+max-line-length = 100
+extend-ignore = [
+    "E203",  # whitespace before ':'
+    "E501",  # line too long
+    "W503",  # line break before binary operator
+]
+exclude = [
+    ".git",
+    "__pycache__",
+    "*.pyc",
+    ".venv",
+    ".eggs",
+    "*.egg",
+    "build",
+    "dist",
+]
+per-file-ignores = [
+    "__init__.py:F401",
 ]

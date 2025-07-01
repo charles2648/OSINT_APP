@@ -293,7 +293,14 @@ async def search_node(state: AgentState):
         quality_metrics = _assess_search_quality(final_results, search_queries, topic)
         
         # Track the search operation with enhanced metadata
-        agent_tracker.track_search_operation(search_queries, final_results)
+        total_execution_time = sum(float(q.get('execution_time', 0)) for q in query_metadata if q.get('execution_time') is not None)
+        overall_success = successful_queries > 0
+        agent_tracker.track_search_operation(
+            query="; ".join(search_queries), 
+            results=final_results, 
+            execution_time=total_execution_time,
+            success=overall_success
+        )
         
         if span:
             span.update(output={

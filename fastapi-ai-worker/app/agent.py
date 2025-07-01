@@ -5,16 +5,21 @@ import json
 import time
 from dotenv import load_dotenv
 from typing import List, Dict, TypedDict
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 from tavily import TavilyClient  # type: ignore[import-untyped]
 
 from .llm_selector import get_llm_instance
 from .langfuse_tracker import agent_tracker
+from . import mcps
 
 load_dotenv()
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
+if not TAVILY_API_KEY:
+    print("⚠️ Warning: TAVILY_API_KEY not found in environment variables. Search functionality will be limited.")
+    tavily_client = None
+else:
+    tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
 
 class AgentState(TypedDict):
     topic: str
@@ -225,6 +230,9 @@ async def search_node(state: AgentState):
                 max_results = _determine_max_results(query, i, len(search_queries))
                 
                 # Execute search with enhanced parameters
+                if not tavily_client:
+                    raise Exception("Tavily API client not available. Please check TAVILY_API_KEY environment variable.")
+                
                 response = tavily_client.search(
                     query=query,
                     search_depth=search_depth,
@@ -942,53 +950,40 @@ async def mcp_execution_node(state: AgentState):
             try:
                 # Route to appropriate MCP function
                 if mcp_name == 'get_domain_whois':
-                    from .mcps import get_domain_whois
-                    result = get_domain_whois(input_data)
+                    result = mcps.get_domain_whois(input_data)
                 elif mcp_name == 'check_ip_reputation':
-                    from .mcps import check_ip_reputation
-                    result = check_ip_reputation(input_data)
+                    result = mcps.check_ip_reputation(input_data)
                 elif mcp_name == 'verify_email_breach':
-                    from .mcps import verify_email_breach
-                    result = verify_email_breach(input_data)
+                    result = mcps.verify_email_breach(input_data)
                 elif mcp_name == 'analyze_url_safety':
-                    from .mcps import analyze_url_safety
-                    result = analyze_url_safety(input_data)
+                    result = mcps.analyze_url_safety(input_data)
                 elif mcp_name == 'get_ssl_certificate':
-                    from .mcps import get_ssl_certificate
-                    result = get_ssl_certificate(input_data)
+                    result = mcps.get_ssl_certificate(input_data)
                 elif mcp_name == 'check_social_media_account':
-                    from .mcps import check_social_media_account
-                    result = check_social_media_account(input_data)
+                    result = mcps.check_social_media_account(input_data)
                 elif mcp_name == 'analyze_file_hash':
-                    from .mcps import analyze_file_hash
-                    result = analyze_file_hash(input_data)
+                    result = mcps.analyze_file_hash(input_data)
                 elif mcp_name == 'analyze_phone_number':
-                    from .mcps import analyze_phone_number
-                    result = analyze_phone_number(input_data)
+                    result = mcps.analyze_phone_number(input_data)
                 elif mcp_name == 'investigate_crypto_address':
-                    from .mcps import investigate_crypto_address
-                    result = investigate_crypto_address(input_data)
+                    result = mcps.investigate_crypto_address(input_data)
                 elif mcp_name == 'analyze_dns_records':
-                    from .mcps import analyze_dns_records
-                    result = analyze_dns_records(input_data)
+                    result = mcps.analyze_dns_records(input_data)
                 elif mcp_name == 'extract_image_metadata':
-                    from .mcps import extract_image_metadata
-                    result = extract_image_metadata(input_data)
+                    result = mcps.extract_image_metadata(input_data)
                 elif mcp_name == 'analyze_network_port':
-                    from .mcps import analyze_network_port
                     # Parse IP:port format
                     if ':' in input_data:
                         ip, port_str = input_data.split(':', 1)
                         try:
                             port = int(port_str)
-                            result = analyze_network_port(ip, port)
+                            result = mcps.analyze_network_port(ip, port)
                         except ValueError:
                             result = {"error": f"Invalid port number: {port_str}"}
                     else:
                         result = {"error": "Input must be in format 'ip:port'"}
                 elif mcp_name == 'check_paste_site_exposure':
-                    from .mcps import check_paste_site_exposure
-                    result = check_paste_site_exposure(input_data)
+                    result = mcps.check_paste_site_exposure(input_data)
                 else:
                     result = {"error": f"Unknown MCP tool: {mcp_name}"}
                 

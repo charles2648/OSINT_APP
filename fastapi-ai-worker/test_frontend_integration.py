@@ -4,9 +4,11 @@ Test the enhanced frontend integration with the OSINT agent backend.
 """
 
 import asyncio
+import pytest
 from app.main import app
 from app.agent import agent_executor
 
+@pytest.mark.asyncio
 async def test_frontend_integration():
     """Test that the frontend can properly communicate with the backend."""
     

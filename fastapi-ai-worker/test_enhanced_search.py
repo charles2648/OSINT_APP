@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import pytest
 from typing import Dict, List
 from unittest.mock import Mock, patch
 
@@ -49,6 +50,7 @@ def create_mock_tavily_response(query: str, num_results: int = 3) -> Dict:
         "results": base_results[:num_results]
     }
 
+@pytest.mark.asyncio
 async def test_enhanced_search_node():
     """Test the enhanced search node with various scenarios."""
     

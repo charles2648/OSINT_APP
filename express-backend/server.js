@@ -90,10 +90,10 @@ if (config.logRequests) {
   });
 }
 
-// Health check endpoint
+// Health check endpoint with improved error handling
 app.get('/health', async(req, res) => {
   try {
-    const stats = dbUtils.getSystemStats();
+    const stats = await dbUtils.getSystemStats();
     const aiWorkerUrl = config.aiWorkerUrl;
 
     // Quick health check of AI worker
@@ -209,11 +209,11 @@ app.post('/run_agent_stream', express.json(), async(req, res) => {
     const caseId = case_id || randomUUID();
     const runId = randomUUID();
 
-    dbUtils.createResearchCase(caseId, topic);
-    dbUtils.createAgentRun(runId, caseId, model_id, temperature);
+    await dbUtils.createResearchCase(caseId, topic);
+    await dbUtils.createAgentRun(runId, caseId, model_id, temperature);
 
     // Get approved memory
-    const memory = dbUtils.getApprovedMemory(5);
+    const memory = await dbUtils.getApprovedMemory(5);
 
     console.log(`🚀 Starting investigation: ${caseId} with model: ${model_id}, temp: ${temperature}`);
 

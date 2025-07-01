@@ -98,8 +98,22 @@ async function startResearch() {
     const model_id = llmModelSelectEl.value;
     const temperature = parseFloat(temperatureSliderEl.value);
 
-    if (!topic || !model_id) {
-        alert('Please enter a research topic and select an AI model.');
+    // Enhanced input validation
+    if (!topic || topic.length < 3) {
+        alert('Please enter a research topic (minimum 3 characters).');
+        researchTopicEl.focus();
+        return;
+    }
+    
+    if (!model_id) {
+        alert('Please select an AI model.');
+        llmModelSelectEl.focus();
+        return;
+    }
+    
+    if (temperature < 0 || temperature > 1) {
+        alert('Temperature must be between 0.0 and 1.0.');
+        temperatureSliderEl.focus();
         return;
     }
 

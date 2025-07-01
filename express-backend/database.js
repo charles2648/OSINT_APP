@@ -179,7 +179,7 @@ export async function initializeDatabase() {
  */
 export function getDb() {
   if (!db) {
-    throw new Error('Database not initialized. Call initializeDatabase first.');
+    throw new Error('Database not initialized. Call initializeDatabase() first and await its completion.');
   }
   return db;
 }

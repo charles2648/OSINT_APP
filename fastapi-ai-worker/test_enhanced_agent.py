@@ -1,9 +1,9 @@
 # Test script for the enhanced OSINT agent with improved planner prompts
 
 import asyncio
-import json
-from app.agent import agent_executor
+import pytest
 
+@pytest.mark.asyncio
 async def test_mcp_vs_function_calls():
     """Test to demonstrate difference between current MCPs and true MCP protocol."""
     
@@ -14,7 +14,7 @@ async def test_mcp_vs_function_calls():
     domain = "google.com"
     
     # Test current "MCP" implementation (actually enhanced function calls)
-    print(f"\n📋 Current Implementation (Enhanced Function Calls):")
+    print("\n📋 Current Implementation (Enhanced Function Calls):")
     try:
         from app.mcps import get_domain_whois
         current_result = get_domain_whois(domain)
@@ -46,7 +46,7 @@ async def test_mcp_vs_function_calls():
         print(f"❌ Error: {e}")
     
     # Demonstrate what true MCP would look like
-    print(f"\n🚀 True MCP Implementation (Conceptual):")
+    print("\n🚀 True MCP Implementation (Conceptual):")
     mock_mcp_result = {
         "mcp_version": "1.0",
         "tool": "domain_whois", 
@@ -75,7 +75,7 @@ async def test_mcp_vs_function_calls():
         }
     }
     
-    print(f"✨ Enhanced MCP Features:")
+    print("✨ Enhanced MCP Features:")
     print(f"  • MCP Version: {mock_mcp_result['mcp_version']}")
     print(f"  • Chain of Custody: {len(mock_mcp_result['provenance']['chain_of_custody'])} steps")
     print(f"  • Confidence Score: {mock_mcp_result['output']['confidence']}")
@@ -83,6 +83,7 @@ async def test_mcp_vs_function_calls():
     print(f"  • Audit Trail: {len(mock_mcp_result['provenance']['audit_trail'])} events")
     print(f"  • Reproducible: {mock_mcp_result['provenance']['reproducible']}")
 
+@pytest.mark.asyncio
 async def test_enhanced_planner():
     """Test the enhanced planner node with various OSINT scenarios."""
     
@@ -177,17 +178,17 @@ async def test_enhanced_planner():
             from app.agent import planner_node
             result = await planner_node(test_case['state'])
             
-            print(f"\n✅ Results:")
+            print("\n✅ Results:")
             print(f"  • Queries generated: {len(result['search_queries'])}")
             print(f"  • Has reasoning: {'Yes' if result.get('planner_reasoning') else 'No'}")
             
-            print(f"\n🎯 Generated Queries:")
+            print("\n🎯 Generated Queries:")
             for j, query in enumerate(result['search_queries'], 1):
                 words = len(query.split())
                 print(f"  {j}. {query} ({words} words)")
             
             if result.get('planner_reasoning'):
-                print(f"\n🧠 Strategic Reasoning:")
+                print("\n🧠 Strategic Reasoning:")
                 print(f"  {result['planner_reasoning'][:200]}...")
             
             # Validate query quality
@@ -202,19 +203,20 @@ async def test_enhanced_planner():
                     quality_issues.append(f"Query lacks content: '{query}'")
             
             if quality_issues:
-                print(f"\n⚠️  Quality Issues:")
+                print("\n⚠️  Quality Issues:")
                 for issue in quality_issues:
                     print(f"  • {issue}")
             else:
-                print(f"\n✨ All queries meet quality standards!")
+                print("\n✨ All queries meet quality standards!")
                 
         except Exception as e:
             print(f"\n❌ Error: {str(e)}")
             import traceback
             traceback.print_exc()
     
-    print(f"\n🏁 Testing completed!")
+    print("\n🏁 Testing completed!")
 
+@pytest.mark.asyncio
 async def test_full_agent_workflow():
     """Test the complete enhanced agent workflow."""
     
@@ -246,7 +248,7 @@ async def test_full_agent_workflow():
     }
     
     try:
-        print(f"🚀 Running complete agent workflow...")
+        print("🚀 Running complete agent workflow...")
         print(f"Topic: {test_state['topic']}")
         
         # This would require Langfuse tracking to be properly set up
@@ -254,7 +256,7 @@ async def test_full_agent_workflow():
         from app.agent import planner_node
         result = await planner_node(test_state)
         
-        print(f"\n✅ Planner Results:")
+        print("\n✅ Planner Results:")
         print(f"  • Generated {len(result['search_queries'])} queries")
         print(f"  • Strategic reasoning: {bool(result.get('planner_reasoning'))}")
         

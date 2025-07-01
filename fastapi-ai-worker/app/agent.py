@@ -49,8 +49,7 @@ class AgentState(TypedDict):
 class PlannerSchema(BaseModel):
     search_queries: List[str] = Field(
         description="A list of 3-5 strategic OSINT search queries, each 5-15 words long, targeting different information sources and angles",
-        min_items=3,
-        max_items=5
+        min_length=3
     )
     reasoning: str = Field(
         description="Brief explanation of the research strategy and how these queries complement each other",
@@ -301,7 +300,14 @@ async def search_node(state: AgentState):
         quality_metrics = _assess_search_quality(final_results, search_queries, topic)
         
         # Track the search operation with enhanced metadata
-        total_execution_time = sum(float(q.get('execution_time', 0)) for q in query_metadata if q.get('execution_time') is not None)
+        total_execution_time = 0.0
+        for q in query_metadata:
+            exec_time = q.get('execution_time', 0)
+            if exec_time is not None and isinstance(exec_time, (int, float, str)):
+                try:
+                    total_execution_time += float(exec_time)
+                except (ValueError, TypeError):
+                    continue
         overall_success = successful_queries > 0
         agent_tracker.track_search_operation(
             query="; ".join(search_queries), 
@@ -1001,7 +1007,7 @@ async def mcp_execution_node(state: AgentState):
                 }
                 
                 # Track individual MCP operation
-                agent_tracker.track_mcp_operation(mcp_name, input_data, result)
+                agent_tracker.track_mcp_operation(mcp_name, input_data, result, time.time() - verification_start_time)
                 
                 execution_results.append({
                     "mcp_name": mcp_name,

@@ -9,8 +9,12 @@ from typing import List, Dict, Any, Optional
 from .agent import agent_executor
 from .llm_selector import AVAILABLE_MODELS_CONFIG
 from .langfuse_tracker import track_agent_session_start, track_agent_session_end, agent_tracker
+from .agent_memory import create_agent_memory_manager
 
 app = FastAPI()
+
+# Initialize global memory manager for API endpoints
+memory_manager = create_agent_memory_manager()
 
 class AgentRequest(BaseModel):
     topic: str
@@ -104,6 +108,28 @@ async def submit_feedback(request: FeedbackRequest):
         feedback_data=request.feedback_data
     )
     return {"status": "feedback_recorded", "case_id": request.case_id}
+
+class MemorySearchRequest(BaseModel):
+    query: str
+    limit: int = 10
+
+@app.post("/memory/search")
+async def search_memory(request: MemorySearchRequest):
+    """Search long-term memory for similar investigations."""
+    results = await memory_manager.search_memories(request.query, limit=request.limit)
+    return {"results": results}
+
+@app.get("/memory/stats")
+async def get_memory_stats():
+    """Get statistics about the memory system."""
+    stats = await memory_manager.get_memory_statistics()
+    return stats
+
+@app.get("/memory/patterns")
+async def get_memory_patterns(topic: str = None):
+    """Get investigation pattern insights from memory."""
+    patterns = await memory_manager.get_investigation_patterns(topic_filter=topic)
+    return patterns
 
 def main():
     """Main entry point for the OSINT agent application."""

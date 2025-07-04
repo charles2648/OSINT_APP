@@ -11,6 +11,7 @@ from tavily import TavilyClient  # type: ignore[import-untyped]
 
 from .llm_selector import get_llm_instance
 from .langfuse_tracker import agent_tracker
+from .agent_memory import AgentMemoryManager, create_agent_memory_manager
 from . import mcps
 
 load_dotenv()
@@ -20,6 +21,9 @@ if not TAVILY_API_KEY:
     tavily_client = None
 else:
     tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
+
+# Initialize memory manager for agent
+memory_manager = create_agent_memory_manager()
 
 class AgentState(TypedDict):
     topic: str
@@ -63,6 +67,38 @@ async def planner_node(state: AgentState):
         llm = get_llm_instance(state["model_id"], state["temperature"])
         memory_str = json.dumps(state.get("long_term_memory", []), indent=2)
         
+        # Initialize investigation context in memory manager
+        memory_manager.start_investigation(
+            case_id=state["case_id"],
+            topic=state["topic"],
+            tags=["osint", "investigation"]
+        )
+        
+        # Retrieve memory insights for better planning
+        memory_insights = await memory_manager.get_memory_insights(state["topic"])
+        memory_insights_str = ""
+        
+        if memory_insights:
+            memory_insights_str = "\n<memory_insights>\n"
+            memory_insights_str += "Based on previous similar investigations:\n\n"
+            
+            for insight in memory_insights[:3]:  # Use top 3 insights
+                memory_insights_str += f"**Similar Case**: {insight.similar_case_id} (similarity: {insight.similarity_score:.2f})\n"
+                memory_insights_str += f"**Reasoning**: {insight.reasoning}\n"
+                
+                if insight.relevant_strategies:
+                    memory_insights_str += f"**Successful Strategies**: {', '.join(insight.relevant_strategies)}\n"
+                
+                if insight.recommended_tools:
+                    memory_insights_str += f"**Recommended Tools**: {', '.join(insight.recommended_tools)}\n"
+                
+                if insight.potential_challenges:
+                    memory_insights_str += f"**Potential Challenges**: {', '.join(insight.potential_challenges)}\n"
+                
+                memory_insights_str += "\n"
+            
+            memory_insights_str += "</memory_insights>\n"
+        
         # Enhanced prompt following Anthropic/OpenAI best practices
         prompt = f"""<role>
 You are a professional OSINT (Open Source Intelligence) analyst with expertise in systematic information gathering, verification, and intelligence synthesis. Your role is to create strategic research plans that maximize information discovery while maintaining operational security.
@@ -80,6 +116,8 @@ Analyze the research topic and create a comprehensive OSINT research plan with t
 Previous approved research findings and patterns:
 {memory_str if memory_str.strip() != '[]' else 'No previous findings available for this research topic.'}
 </historical_context>
+
+{memory_insights_str}
 
 <methodology>
 Apply the OSINT intelligence cycle:
@@ -207,6 +245,10 @@ async def search_node(state: AgentState):
     with agent_tracker.track_node_execution("search", {"queries_count": len(state["search_queries"])}) as span:
         search_queries = state["search_queries"]
         topic = state["topic"]
+        
+        # Record search queries in memory
+        for query in search_queries:
+            memory_manager.record_search_query(query)
         
         # Enhanced search execution with professional OSINT practices
         all_results = []
@@ -612,6 +654,10 @@ Create a comprehensive intelligence report based on the search results."""
             synthesized_findings = ''
             confidence_level = 'Low'
             key_gaps = []
+        
+        # Record findings in memory
+        for finding in state["search_results"]:
+            memory_manager.record_finding(finding)
         
         if span:
             span.update(output={
@@ -1046,6 +1092,10 @@ async def mcp_execution_node(state: AgentState):
                 
                 failed_verifications += 1
         
+        # Record MCP tool execution in memory
+        for task in mcp_tasks:
+            memory_manager.record_mcp_execution(task.get('mcp_name'))
+        
         if span:
             span.update(output={
                 "total_verifications": len(mcp_tasks),
@@ -1248,6 +1298,12 @@ Generate the comprehensive intelligence report that integrates all available inf
         report_quality_metrics = _assess_report_quality(
             final_report, verified_data, search_quality_metrics, 
             len(state.get("search_results", [])), verification_analysis
+        )
+        
+        # Finalize and store the investigation in long-term memory
+        await memory_manager.finalize_investigation(
+            verification_status="completed",
+            additional_tags=["osint", "final_report"]
         )
         
         if span:

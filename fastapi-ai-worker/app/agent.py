@@ -12,6 +12,8 @@ from tavily import TavilyClient  # type: ignore[import-untyped]
 from .llm_selector import get_llm_instance
 from .langfuse_tracker import agent_tracker
 from .agent_memory import AgentMemoryManager, create_agent_memory_manager
+from .conversation_memory import ConversationMemoryManager
+from .enhanced_agent_state import EnhancedAgentState
 from . import mcps
 
 load_dotenv()
@@ -1094,7 +1096,9 @@ async def mcp_execution_node(state: AgentState):
         
         # Record MCP tool execution in memory
         for task in mcp_tasks:
-            memory_manager.record_mcp_execution(task.get('mcp_name'))
+            mcp_name = task.get('mcp_name')
+            if mcp_name:  # Add null check for type safety
+                memory_manager.record_mcp_execution(mcp_name)
         
         if span:
             span.update(output={

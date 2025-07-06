@@ -24,37 +24,29 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.10.0",
-    
     # LangChain and LangGraph ecosystem
     "langgraph>=0.2.50",
     "langchain-core>=0.3.20",
     "langchain-openai>=0.2.10",
     "langchain-anthropic>=0.2.5",
     "langchain-community>=0.3.10",
-    
     # Environment and configuration
     "python-dotenv>=1.0.1",
-    
     # Search and web scraping
     "tavily-python>=0.5.0",
     "requests>=2.32.0",
-    
     # OSINT and network analysis tools
     "python-whois>=0.9.4",
     "dnspython>=2.7.0",
     "phonenumbers>=8.13.50",
-    
     # Image processing and metadata extraction
     "Pillow>=11.0.0",
-    
     # Tracking and observability
     "langfuse>=2.55.0",
-    
     # Data processing and utilities
     "pydantic-settings>=2.6.0",
     "httpx>=0.28.0",
     "aiofiles>=24.1.0",
-    
     # Vector memory and embeddings
     "chromadb>=0.5.0",
     "sentence-transformers>=3.0.0",

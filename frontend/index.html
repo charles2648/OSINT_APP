@@ -53,6 +53,57 @@
                  <div id="completion-message"></div>
                  <a id="download-link" class="hidden" href="#" target="_blank" download>📥 Download Report</a>
             </div>
+
+            <!-- Enhanced agent with conversation memory -->
+            <div id="enhanced-agent-section">
+                <h2>🧠 Enhanced Agent with Memory</h2>
+                <div class="enhanced-controls">
+                    <div class="conversation-controls">
+                        <button id="start-new-conversation-btn">🆕 Start New Conversation</button>
+                        <button id="load-conversation-btn">📁 Load Conversation</button>
+                        <input type="text" id="conversation-id-input" placeholder="Enter conversation ID..." class="hidden">
+                        <button id="load-conversation-confirm-btn" class="hidden">Load</button>
+                    </div>
+                    
+                    <div id="current-conversation-info" class="hidden">
+                        <div class="conversation-meta">
+                            <span id="conversation-id-display"></span>
+                            <span id="conversation-stats"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="conversation-history" class="conversation-container hidden">
+                    <h3>💬 Conversation History</h3>
+                    <div id="chat-messages" class="chat-messages"></div>
+                </div>
+
+                <div id="enhanced-input-section" class="hidden">
+                    <textarea id="enhanced-research-topic" placeholder="Ask a question or start an investigation..." title="Enter your query for the enhanced agent"></textarea>
+                    <div class="enhanced-controls-row">
+                        <button id="send-enhanced-query-btn">🚀 Send Query</button>
+                        <button id="continue-conversation-btn" class="hidden">↗️ Continue Investigation</button>
+                        <span id="context-indicator" class="context-indicator hidden">🧠 Using conversation context</span>
+                    </div>
+                </div>
+
+                <div id="enhanced-status-section" class="hidden">
+                    <h3>Investigation Status</h3>
+                    <div id="enhanced-live-log" class="log-box"></div>
+                </div>
+
+                <div id="enhanced-results-section" class="hidden">
+                    <h3>Enhanced Investigation Results</h3>
+                    <div id="enhanced-findings-display" class="findings-box"></div>
+                    <div class="memory-info">
+                        <div id="memory-stats" class="memory-stats"></div>
+                        <div id="cached-findings" class="cached-findings hidden">
+                            <h4>📚 Cached Findings</h4>
+                            <div id="cached-findings-list"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
     <script src="/static/script.js"></script>

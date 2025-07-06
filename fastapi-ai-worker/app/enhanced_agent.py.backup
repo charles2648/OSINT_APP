@@ -1,0 +1,647 @@
+# Enhanced OSINT agent with conversation memory and context optimization.
+
+import os
+import json
+import time
+import uuid
+from dotenv import load_dotenv
+from typing import List, Dict, Optional, Any
+from pydantic import BaseModel, Field
+from langgraph.graph import StateGraph, END
+from tavily import TavilyClient  # type: ignore[import-untyped]
+
+from .llm_selector import get_llm_instance
+from .langfuse_tracker import agent_tracker
+from .agent_memory import create_agent_memory_manager
+from .conversation_memory import ConversationMemoryManager, ConversationMessage, MessageRole, MessageType
+from .enhanced_agent_state import EnhancedAgentState
+
+load_dotenv()
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+if not TAVILY_API_KEY:
+    print("⚠️ Warning: TAVILY_API_KEY not found in environment variables. Search functionality will be limited.")
+    tavily_client = None
+else:
+    tavily_client = TavilyClient(api_key=TAVILY_API_KEY)
+
+# Initialize memory managers
+memory_manager = create_agent_memory_manager()
+conversation_memory = ConversationMemoryManager(memory_manager)
+
+class EnhancedPlannerSchema(BaseModel):
+    search_queries: List[str] = Field(
+        description="A list of 3-5 strategic OSINT search queries, optimized based on conversation context",
+        min_length=3
+    )
+    reasoning: str = Field(
+        description="Brief explanation including how conversation context influenced the strategy",
+        min_length=50,
+        max_length=500
+    )
+    context_utilization: str = Field(
+        description="How previous conversation context was utilized in planning",
+        default=""
+    )
+    memory_insights_applied: List[str] = Field(
+        description="List of memory insights that influenced this plan",
+        default=[]
+    )
+
+async def enhanced_planner_node(state: EnhancedAgentState):
+    """Enhanced planner that considers conversation memory and context reuse."""
+    with agent_tracker.track_node_execution("enhanced_planner", {
+        "topic": state.topic,
+        "session_id": state.session_id,
+        "memory_size": len(state.long_term_memory),
+        "conversation_length": len(state.conversation_history)
+    }) as span:
+        
+        llm = get_llm_instance(state.model_id, state.temperature)
+        
+        # Start or continue conversation session
+        if not state.session_id:
+            session_id = await conversation_memory.start_conversation(
+                topic=state.topic,
+                case_id=state.case_id,
+                metadata={"model_id": state.model_id, "temperature": state.temperature}
+            )
+            state.session_id = session_id
+        
+        # Get context reuse insights
+        context_insights = await conversation_memory.get_context_reuse_insights(
+            state.session_id,
+            state.topic
+        )
+        
+        # Apply context optimization
+        if context_insights:
+            state.context_reuse_insights = context_insights
+            
+            # Check if we can reuse recent findings
+            for insight in context_insights:
+                if insight.reuse_score > 0.8 and insight.cached_findings:
+                    # High confidence reuse - skip some search steps
+                    state.cached_findings.update(insight.cached_findings)
+                    span.update({"context_reuse_applied": True, "reuse_score": insight.reuse_score})
+        
+        # Build context-aware prompt
+        conversation_context = ""
+        if state.conversation_history:
+            recent_messages = state.conversation_history[-6:]  # Last 6 messages
+            conversation_context = "\n<conversation_context>\n"
+            conversation_context += "Recent conversation history:\n\n"
+            
+            for msg in recent_messages:
+                role_label = "User" if msg.role == "user" else "Assistant"
+                conversation_context += f"**{role_label}**: {msg.content[:200]}...\n"
+            
+            conversation_context += "</conversation_context>\n"
+        
+        # Build cached findings context
+        cached_context = ""
+        if state.cached_findings:
+            cached_context = "\n<cached_findings>\n"
+            cached_context += "Previously discovered information that may be relevant:\n\n"
+            
+            for key, finding in state.cached_findings.items():
+                cached_context += f"**{key}**: {str(finding)[:150]}...\n"
+            
+            cached_context += "\nNote: Consider if these cached findings reduce the need for new searches.\n"
+            cached_context += "</cached_findings>\n"
+        
+        # Enhanced prompt with conversation context
+        prompt = f"""<role>
+You are a professional OSINT analyst with access to conversation history and cached findings. Your role is to create efficient research plans that build upon previous discoveries and avoid redundant searches.
+</role>
+
+<task>
+Analyze the research topic considering conversation context and cached findings to create an optimized OSINT research plan.
+</task>
+
+<research_topic>
+{state.topic}
+</research_topic>
+
+{conversation_context}
+
+{cached_context}
+
+<long_term_memory>
+Historical research findings:
+{json.dumps(state.long_term_memory, indent=2) if state.long_term_memory else 'No previous findings available.'}
+</long_term_memory>
+
+<optimization_instructions>
+1. **Context Awareness**: Consider how the conversation has evolved and what specific information the user is seeking
+2. **Avoid Redundancy**: If cached findings contain relevant information, adjust queries to fill gaps rather than duplicate effort
+3. **Build Upon Previous Work**: Use conversation history to understand which approaches have been tried and what worked
+4. **Efficient Resource Use**: Prioritize queries that will provide the most new valuable information
+5. **Conversation Flow**: Ensure queries align with the natural progression of the conversation
+</optimization_instructions>
+
+Create 3-5 targeted search queries that:
+- Build upon the conversation context
+- Avoid duplicating cached findings
+- Address specific information gaps identified in the conversation
+- Provide actionable intelligence for the user's current needs
+
+For each query, consider:
+- What new information does this provide beyond cached findings?
+- How does this advance the conversation's investigation goals?
+- What specific user question or need does this address?
+
+Return your response as a JSON object with the following structure:
+{{
+    "search_queries": ["query1", "query2", "query3"],
+    "reasoning": "explanation of strategy",
+    "context_utilization": "how conversation context influenced planning",
+    "memory_insights_applied": ["insight1", "insight2"]
+}}
+"""
+
+        try:
+            # Get structured response from LLM
+            response = await llm.ainvoke(prompt)
+            
+            # Parse JSON response
+            if hasattr(response, 'content'):
+                content = response.content
+            else:
+                content = str(response)
+            
+            # Extract JSON from response
+            try:
+                # Look for JSON in the response
+                start_idx = content.find('{')
+                end_idx = content.rfind('}') + 1
+                if start_idx >= 0 and end_idx > start_idx:
+                    json_str = content[start_idx:end_idx]
+                    parsed_response = json.loads(json_str)
+                else:
+                    raise ValueError("No JSON found in response")
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to extracting queries manually
+                lines = content.split('\n')
+                queries = []
+                for line in lines:
+                    if 'query' in line.lower() or line.strip().startswith(('-', '*', '•')):
+                        clean_query = line.strip().lstrip('-*•').strip()
+                        if len(clean_query) > 10:
+                            queries.append(clean_query)
+                
+                parsed_response = {
+                    "search_queries": queries[:5] if queries else [f"OSINT investigation: {state.topic}"],
+                    "reasoning": "Enhanced search strategy based on conversation context",
+                    "context_utilization": "Applied conversation memory optimization",
+                    "memory_insights_applied": ["conversation_context", "cached_findings"]
+                }
+            
+            # Validate and update state
+            planner_result = EnhancedPlannerSchema(**parsed_response)
+            
+            state.search_queries = planner_result.search_queries
+            state.planner_reasoning = planner_result.reasoning
+            state.context_utilization = planner_result.context_utilization
+            state.memory_insights_applied = planner_result.memory_insights_applied
+            
+            # Log conversation message
+            await conversation_memory.add_message(
+                state["conversation_id"],
+                ConversationMessage(
+                    message_id=str(uuid.uuid4()),
+                    role=MessageRole.SYSTEM,
+                    content=f"Enhanced planning completed: {len(planner_result.search_queries)} queries generated based on conversation context",
+                    message_type=MessageType.ANALYSIS_RESPONSE,
+                    timestamp=time.time(),
+                    metadata={
+                        "node": "enhanced_planner",
+                        "queries_generated": len(planner_result.search_queries),
+                        "context_reuse_applied": len(state.get("cached_findings", {})) > 0
+                    }
+                )
+            )
+            
+            span.update({
+                "queries_generated": len(planner_result.search_queries),
+                "context_utilization": planner_result.context_utilization,
+                "memory_insights_count": len(planner_result.memory_insights_applied)
+            })
+            
+            return state
+            
+        except Exception as e:
+            span.update({"error": str(e)})
+            # Fallback to basic planning
+            state.search_queries = [f"OSINT investigation: {state.topic}"]
+            state.planner_reasoning = f"Fallback planning due to error: {str(e)}"
+            state.context_utilization = "Error occurred during enhanced planning"
+            state.memory_insights_applied = []
+            
+            return state
+
+async def enhanced_search_node(state: EnhancedAgentState):
+    """Enhanced search that considers cached findings and avoids redundant queries."""
+    with agent_tracker.track_node_execution("enhanced_search", {
+        "topic": state.topic,
+        "session_id": state.session_id,
+        "num_queries": len(state.search_queries),
+        "cached_findings": len(state.cached_findings)
+    }) as span:
+        
+        search_results = []
+        query_performance = []
+        
+        # Check if we have sufficient cached findings
+        if state.cached_findings and len(state.cached_findings) >= 3:
+            # High confidence cached findings - reduce search scope
+            queries_to_execute = state.search_queries[:2]  # Execute fewer queries
+            span.update({"optimization": "reduced_search_scope", "cached_findings_used": True})
+        else:
+            queries_to_execute = state.search_queries
+        
+        for i, query in enumerate(queries_to_execute):
+            start_time = time.time()
+            
+            try:
+                # Check if this query is similar to cached findings
+                should_skip = False
+                for cached_key, cached_data in state.cached_findings.items():
+                    if any(word in cached_key.lower() for word in query.lower().split()[:3]):
+                        # Similar cached finding exists - log but continue with search
+                        span.update({f"similar_cached_finding_{i}": cached_key})
+                
+                if not should_skip and tavily_client:
+                    # Execute search
+                    search_response = tavily_client.search(
+                        query=query,
+                        search_depth="advanced",
+                        max_results=10,
+                        include_answer=True,
+                        include_raw_content=False
+                    )
+                    
+                    if search_response and 'results' in search_response:
+                        for result in search_response['results']:
+                            search_results.append({
+                                'query': query,
+                                'title': result.get('title', ''),
+                                'url': result.get('url', ''),
+                                'content': result.get('content', ''),
+                                'score': result.get('score', 0),
+                                'published_date': result.get('published_date', ''),
+                                'timestamp': time.time()
+                            })
+                    
+                    end_time = time.time()
+                    query_performance.append({
+                        'query': query,
+                        'execution_time': end_time - start_time,
+                        'results_count': len(search_response.get('results', [])) if search_response else 0,
+                        'cached_findings_considered': len(state.cached_findings),
+                        'status': 'success'
+                    })
+                
+            except Exception as e:
+                end_time = time.time()
+                query_performance.append({
+                    'query': query,
+                    'execution_time': end_time - start_time,
+                    'results_count': 0,
+                    'error': str(e),
+                    'status': 'failed'
+                })
+                span.update({f"query_error_{i}": str(e)})
+        
+        # Update state with results
+        state.search_results = search_results
+        state.query_performance = query_performance
+        
+        # Calculate search quality metrics
+        total_results = len(search_results)
+        successful_queries = len([q for q in query_performance if q.get('status') == 'success'])
+        avg_execution_time = sum([q.get('execution_time', 0) for q in query_performance]) / len(query_performance) if query_performance else 0
+        
+        state.search_quality_metrics = {
+            'total_results': total_results,
+            'successful_queries': successful_queries,
+            'success_rate': successful_queries / len(state.search_queries) if state.search_queries else 0,
+            'average_execution_time': avg_execution_time,
+            'cached_findings_utilized': len(state.cached_findings),
+            'optimization_applied': len(state.cached_findings) >= 3
+        }
+        
+        # Log search completion
+        await conversation_memory.add_message(
+            state["conversation_id"],
+            ConversationMessage(
+                message_id=str(uuid.uuid4()),
+                role=MessageRole.SYSTEM,
+                content=f"Enhanced search completed: {total_results} results from {successful_queries} successful queries",
+                message_type=MessageType.ANALYSIS_RESPONSE,
+                timestamp=time.time(),
+                metadata={
+                    "node": "enhanced_search",
+                    "results_count": total_results,
+                    "success_rate": state["search_quality_metrics"]['success_rate'],
+                    "cached_findings_utilized": len(state.get("cached_findings", {}))
+                }
+            )
+        )
+        
+        span.update({
+            "total_results": total_results,
+            "successful_queries": successful_queries,
+            "cached_findings_utilized": len(state.cached_findings)
+        })
+        
+        return state
+
+async def enhanced_synthesis_node(state: EnhancedAgentState):
+    """Enhanced synthesis that incorporates conversation context and cached findings."""
+    with agent_tracker.track_node_execution("enhanced_synthesis", {
+        "topic": state.topic,
+        "session_id": state.session_id,
+        "results_count": len(state.search_results),
+        "cached_findings": len(state.cached_findings)
+    }) as span:
+        
+        llm = get_llm_instance(state.model_id, state.temperature)
+        
+        # Prepare comprehensive context
+        search_results_str = json.dumps(state.search_results, indent=2) if state.search_results else "No new search results available."
+        cached_findings_str = json.dumps(state.cached_findings, indent=2) if state.cached_findings else "No cached findings available."
+        conversation_summary = ""
+        
+        if state.conversation_history:
+            # Summarize conversation for context
+            conversation_summary = "\n<conversation_summary>\n"
+            conversation_summary += "Key points from conversation:\n"
+            
+            user_messages = [msg for msg in state.conversation_history if msg.role == "user"]
+            if user_messages:
+                conversation_summary += f"- User's primary interest: {user_messages[-1].content[:100]}...\n"
+                conversation_summary += f"- Total user interactions: {len(user_messages)}\n"
+            
+            conversation_summary += "</conversation_summary>\n"
+        
+        # Enhanced synthesis prompt
+        prompt = f"""<role>
+You are a professional OSINT analyst synthesizing intelligence from multiple sources, including new search results and previously cached findings. Your goal is to provide comprehensive, contextual analysis that builds upon the ongoing conversation.
+</role>
+
+<task>
+Synthesize the available information to provide a comprehensive intelligence assessment that addresses the user's evolving needs as revealed through the conversation context.
+</task>
+
+<research_topic>
+{state.topic}
+</research_topic>
+
+{conversation_summary}
+
+<new_search_results>
+Recent search findings:
+{search_results_str}
+</new_search_results>
+
+<cached_findings>
+Previously discovered information:
+{cached_findings_str}
+</cached_findings>
+
+<synthesis_instructions>
+1. **Comprehensive Integration**: Combine new search results with cached findings to provide complete picture
+2. **Conversation Awareness**: Address the specific questions and interests revealed in the conversation
+3. **Information Quality**: Assess reliability and relevance of both new and cached information
+4. **Gap Identification**: Identify what information is still missing or needs verification
+5. **Actionable Intelligence**: Provide specific, actionable insights for the user's needs
+6. **Context Continuity**: Ensure the synthesis builds logically on previous conversation points
+</synthesis_instructions>
+
+<output_format>
+Provide a comprehensive intelligence synthesis that includes:
+1. **Executive Summary**: Key findings that directly address the user's current needs
+2. **Detailed Analysis**: Integration of new and cached findings with source assessment
+3. **Information Gaps**: What critical information is still missing
+4. **Confidence Assessment**: Reliability evaluation of the synthesized intelligence
+5. **Recommendations**: Specific next steps or actions based on the findings
+6. **Context Integration**: How this synthesis builds upon the conversation history
+</output_format>
+
+Focus on providing maximum value by leveraging both new discoveries and cached knowledge to address the user's evolving intelligence requirements.
+"""
+
+        try:
+            response = await llm.ainvoke(prompt)
+            
+            if hasattr(response, 'content'):
+                synthesized_findings = response.content
+            else:
+                synthesized_findings = str(response)
+            
+            state.synthesized_findings = synthesized_findings
+            
+            # Extract key information for caching
+            new_cached_findings = {}
+            if state.search_results:
+                # Cache significant findings for future use
+                for result in state.search_results[:5]:  # Cache top 5 results
+                    if result.get('score', 0) > 0.7:  # High relevance threshold
+                        cache_key = f"search_finding_{result.get('title', 'unknown')[:50]}"
+                        new_cached_findings[cache_key] = {
+                            'content': result.get('content', ''),
+                            'source': result.get('url', ''),
+                            'timestamp': time.time(),
+                            'relevance_score': result.get('score', 0)
+                        }
+            
+            # Update cached findings
+            state.cached_findings.update(new_cached_findings)
+            
+            # Store findings in conversation memory for future reuse
+            if new_cached_findings:
+                await conversation_memory.cache_investigation_findings(
+                    state.session_id,
+                    state.topic,
+                    new_cached_findings
+                )
+            
+            # Assess synthesis confidence
+            confidence_factors = {
+                'new_results_quality': len([r for r in state.search_results if r.get('score', 0) > 0.7]) / max(len(state.search_results), 1),
+                'cached_findings_relevance': len(state.cached_findings) / 10,  # Normalize to 0-1
+                'conversation_context': min(len(state.conversation_history) / 10, 1.0),  # More context = higher confidence
+                'source_diversity': len(set([r.get('url', '').split('/')[2] for r in state.search_results if r.get('url')])) / max(len(state.search_results), 1)
+            }
+            
+            overall_confidence = sum(confidence_factors.values()) / len(confidence_factors)
+            
+            state.synthesis_confidence = f"Overall confidence: {overall_confidence:.2f} (based on {len(confidence_factors)} factors)"
+            
+            # Log synthesis completion
+            await conversation_memory.add_message(
+                state["conversation_id"],
+                ConversationMessage(
+                    message_id=str(uuid.uuid4()),
+                    role=MessageRole.ASSISTANT,
+                    content=f"Intelligence synthesis completed with {len(new_cached_findings)} new findings cached",
+                    message_type=MessageType.ANALYSIS_RESPONSE,
+                    timestamp=time.time(),
+                    metadata={
+                        "node": "enhanced_synthesis",
+                        "confidence_score": overall_confidence,
+                        "new_cached_findings": len(new_cached_findings),
+                        "synthesis_length": len(synthesized_findings)
+                    }
+                )
+            )
+            
+            span.update({
+                "synthesis_length": len(synthesized_findings),
+                "confidence_score": overall_confidence,
+                "new_cached_findings": len(new_cached_findings)
+            })
+            
+            return state
+            
+        except Exception as e:
+            span.update({"error": str(e)})
+            state.synthesized_findings = f"Error during enhanced synthesis: {str(e)}"
+            state.synthesis_confidence = "Low confidence due to synthesis error"
+            return state
+
+def create_enhanced_agent_graph():
+    """Create the enhanced agent graph with conversation memory integration."""
+    
+    # Create the state graph
+    workflow = StateGraph(EnhancedAgentState)
+    
+    # Add nodes
+    workflow.add_node("enhanced_planner", enhanced_planner_node)
+    workflow.add_node("enhanced_search", enhanced_search_node)
+    workflow.add_node("enhanced_synthesis", enhanced_synthesis_node)
+    
+    # Define the flow
+    workflow.set_entry_point("enhanced_planner")
+    workflow.add_edge("enhanced_planner", "enhanced_search")
+    workflow.add_edge("enhanced_search", "enhanced_synthesis")
+    workflow.add_edge("enhanced_synthesis", END)
+    
+    # Compile the graph
+    return workflow.compile()
+
+async def run_enhanced_agent(
+    topic: str,
+    model_id: str = "gpt-4o",
+    temperature: float = 0.1,
+    session_id: Optional[str] = None,
+    case_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Run the enhanced OSINT agent with conversation memory integration."""
+    
+    # Initialize enhanced state
+    if not case_id:
+        case_id = f"case_{int(time.time())}"
+    
+    initial_state = EnhancedAgentState(
+        topic=topic,
+        case_id=case_id,
+        model_id=model_id,
+        temperature=temperature,
+        session_id=session_id,
+        long_term_memory=[],
+        search_queries=[],
+        search_results=[],
+        synthesized_findings="",
+        num_steps=0,
+        conversation_history=[],
+        cached_findings={},
+        context_reuse_insights=[],
+        context_utilization="",
+        memory_insights_applied=[],
+        mcp_verification_list=[],
+        verified_data={},
+        planner_reasoning="",
+        synthesis_confidence="",
+        information_gaps=[],
+        search_quality_metrics={},
+        query_performance=[],
+        mcp_execution_results=[],
+        verification_strategy="",
+        final_confidence_assessment="",
+        final_risk_indicators=[],
+        final_verification_summary="",
+        final_actionable_recommendations=[],
+        final_information_reliability="",
+        report_quality_metrics={}
+    )
+    
+    # If continuing existing session, load conversation context
+    if session_id:
+        conversation_context = await conversation_memory.get_conversation_context(session_id)
+        if conversation_context:
+            initial_state.conversation_history = conversation_context.messages
+            initial_state.cached_findings = conversation_context.cached_findings
+    
+    # Add user message to conversation
+    if session_id:
+        await conversation_memory.add_message(
+            session_id,
+            ConversationMessage(
+                message_id=str(uuid.uuid4()),
+                role=MessageRole.USER,
+                content=f"Starting OSINT investigation: {topic}",
+                message_type=MessageType.INVESTIGATION_REQUEST,
+                timestamp=time.time(),
+                metadata={"case_id": case_id, "model_id": model_id}
+            )
+        )
+    
+    # Create and run the enhanced agent
+    enhanced_agent = create_enhanced_agent_graph()
+    
+    try:
+        # Execute the agent workflow
+        result = await enhanced_agent.ainvoke(initial_state)
+        
+        # Prepare response
+        response = {
+            "case_id": result.case_id,
+            "session_id": result.session_id,
+            "topic": result.topic,
+            "synthesized_findings": result.synthesized_findings,
+            "synthesis_confidence": result.synthesis_confidence,
+            "search_quality_metrics": result.search_quality_metrics,
+            "context_utilization": result.context_utilization,
+            "memory_insights_applied": result.memory_insights_applied,
+            "cached_findings_count": len(result.cached_findings),
+            "conversation_length": len(result.conversation_history),
+            "query_performance": result.query_performance,
+            "planner_reasoning": result.planner_reasoning
+        }
+        
+        return response
+        
+    except Exception as e:
+        # Log error and return fallback response
+        if session_id:
+            await conversation_memory.add_message(
+                session_id,
+                ConversationMessage(
+                    message_id=str(uuid.uuid4()),
+                    role=MessageRole.SYSTEM,
+                    content=f"Enhanced agent execution failed: {str(e)}",
+                    message_type=MessageType.ANALYSIS_RESPONSE,
+                    timestamp=time.time(),
+                    metadata={"error": True, "case_id": case_id}
+                )
+            )
+        
+        return {
+            "case_id": case_id,
+            "session_id": session_id,
+            "topic": topic,
+            "error": f"Enhanced agent execution failed: {str(e)}",
+            "synthesized_findings": f"Investigation could not be completed due to error: {str(e)}",
+            "synthesis_confidence": "Error occurred during processing"
+        }

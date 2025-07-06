@@ -21,11 +21,13 @@ try:
 except ImportError as e:
     logging.warning(f"Vector memory dependencies not available: {e}")
     VECTOR_DEPS_AVAILABLE = False
-    # Create placeholder classes for type hints
-    class SentenceTransformer:
-        pass
-    class Settings:
-        pass
+    # Create placeholder classes for type hints when imports fail
+    if not globals().get('SentenceTransformer'):
+        class SentenceTransformer:
+            pass
+    if not globals().get('Settings'):
+        class Settings:
+            pass
 
 from pydantic import BaseModel, Field
 
@@ -83,7 +85,8 @@ class VectorMemoryManager:
         db_path: str = "./data/memory_db",
         collection_name: str = "osint_investigations",
         embedding_model: str = "all-MiniLM-L6-v2",
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.05,  # Lowered for OSINT use
+        min_similarity_threshold: float = 0.01,
         max_results: int = 10
     ):
         """
@@ -93,7 +96,8 @@ class VectorMemoryManager:
             db_path: Path to ChromaDB storage directory
             collection_name: Name of the ChromaDB collection
             embedding_model: Sentence transformer model for embeddings
-            similarity_threshold: Minimum similarity score for relevant results
+            similarity_threshold: Minimum similarity score for relevant results (default 0.05, optimized for OSINT)
+            min_similarity_threshold: Absolute minimum allowed for threshold (default 0.01)
             max_results: Maximum number of results to return
         """
         if not VECTOR_DEPS_AVAILABLE:
@@ -101,11 +105,22 @@ class VectorMemoryManager:
                 "Vector memory dependencies not available. "
                 "Please install: pip install chromadb sentence-transformers numpy"
             )
-        
+        if similarity_threshold < min_similarity_threshold:
+            logger.warning(f"Similarity threshold {similarity_threshold} is very low; using min {min_similarity_threshold}.")
+            similarity_threshold = min_similarity_threshold
         self.db_path = Path(db_path)
         self.collection_name = collection_name
         self.similarity_threshold = similarity_threshold
+        self.min_similarity_threshold = min_similarity_threshold
         self.max_results = max_results
+        
+        # Initialize performance metrics first
+        self.metrics = {
+            "total_memories": 0,
+            "successful_retrievals": 0,
+            "failed_retrievals": 0,
+            "average_similarity": 0.0
+        }
         
         # Initialize embedding model
         logger.info(f"Loading embedding model: {embedding_model}")
@@ -113,14 +128,6 @@ class VectorMemoryManager:
         
         # Initialize ChromaDB
         self._initialize_database()
-        
-        # Performance metrics
-        self.metrics = {
-            "total_memories": 0,
-            "successful_retrievals": 0,
-            "failed_retrievals": 0,
-            "average_similarity": 0.0
-        }
     
     def _initialize_database(self) -> None:
         """Initialize ChromaDB client and collection."""
@@ -154,25 +161,38 @@ class VectorMemoryManager:
     
     def _create_memory_text(self, entry: MemoryEntry) -> str:
         """
-        Create searchable text representation of a memory entry.
-        
-        Args:
-            entry: Memory entry to convert to text
-            
-        Returns:
-            Concatenated text for semantic search
+        Create a more natural language searchable text representation of a memory entry.
         """
-        text_components = [
-            f"Topic: {entry.topic}",
-            f"Search queries: {', '.join(entry.search_queries)}",
-            f"Key findings: {', '.join([str(f) for f in entry.findings])}",
-            f"Tools used: {', '.join(entry.mcp_tools_used)}",
-            f"Successful strategies: {', '.join(entry.successful_strategies)}",
-            f"Challenges: {', '.join(entry.challenges_encountered)}",
-            f"Tags: {', '.join(entry.tags)}"
-        ]
+        findings_text = "; ".join([
+            f"Finding: {json.dumps(f)}" for f in entry.findings
+        ])
+        strategies_text = ", ".join(entry.successful_strategies)
+        challenges_text = ", ".join(entry.challenges_encountered)
+        tags_text = ", ".join(entry.tags)
+        tools_text = ", ".join(entry.mcp_tools_used)
+        queries_text = ", ".join(entry.search_queries)
         
-        return " | ".join(filter(None, text_components))
+        # Safely handle entity relationships
+        entity_text = ""
+        if hasattr(entry, 'entity_relationships') and entry.entity_relationships:
+            entity_pairs = []
+            for k, v in entry.entity_relationships.items():
+                if isinstance(v, list):
+                    entity_pairs.append(f"{k}: {', '.join(v)}")
+                else:
+                    entity_pairs.append(f"{k}: {v}")
+            entity_text = ", ".join(entity_pairs)
+        
+        return (
+            f"Investigation on '{entry.topic}'. "
+            f"Search queries: {queries_text}. "
+            f"Key findings: {findings_text}. "
+            f"Tools used: {tools_text}. "
+            f"Successful strategies: {strategies_text}. "
+            f"Challenges: {challenges_text}. "
+            f"Tags: {tags_text}. "
+            f"Entities: {entity_text}."
+        )
     
     async def store_memory(self, entry: MemoryEntry) -> bool:
         """
@@ -184,15 +204,26 @@ class VectorMemoryManager:
         Returns:
             True if storage was successful, False otherwise
         """
+        # Validate entry
+        if not entry.case_id or not entry.topic:
+            logger.warning(f"Refusing to store memory with empty case_id or topic: {entry}")
+            return False
+        
         try:
+            # Check for existing entry to prevent duplicates
+            existing = self.collection.get(ids=[entry.id])
+            if existing["ids"]:
+                logger.warning(f"Memory entry {entry.id} already exists, skipping storage")
+                return False
+            
             # Create searchable text
             memory_text = self._create_memory_text(entry)
             
             # Generate embedding
             embedding = self.embedding_model.encode(memory_text).tolist()
             
-            # Prepare metadata
-            metadata = {
+            # Prepare metadata - store complete entry as JSON for accurate reconstruction
+            metadata: Dict[str, Any] = {
                 "case_id": entry.case_id,
                 "topic": entry.topic,
                 "timestamp": entry.timestamp,
@@ -200,7 +231,9 @@ class VectorMemoryManager:
                 "total_sources": entry.total_sources,
                 "verification_status": entry.verification_status,
                 "tags": json.dumps(entry.tags),
-                "mcp_tools": json.dumps(entry.mcp_tools_used)
+                "mcp_tools": json.dumps(entry.mcp_tools_used),
+                # Store complete entry data for accurate reconstruction
+                "full_entry": entry.model_dump_json()
             }
             
             # Store in ChromaDB
@@ -239,64 +272,102 @@ class VectorMemoryManager:
             List of similar memory entries with similarity scores
         """
         try:
-            # Use provided limit or default
             search_limit = limit or self.max_results
             
-            # Generate query embedding
-            query_embedding = self.embedding_model.encode(query).tolist()
+            # Check if collection is empty
+            collection_count = self.collection.count()
+            if collection_count == 0:
+                logger.info("No memories stored yet, returning empty results")
+                return []
             
-            # Search ChromaDB
+            query_embedding = self.embedding_model.encode(query).tolist()
             results = self.collection.query(
                 query_embeddings=[query_embedding],
-                n_results=min(search_limit, self.collection.count()) if self.collection.count() > 0 else 1,
+                n_results=min(search_limit, collection_count),
                 include=["documents", "metadatas", "distances"]
             )
-            
-            # Process results
             search_results = []
             
             if results["ids"] and results["ids"][0]:  # Check if we have results
-                for i, (doc_id, document, metadata, distance) in enumerate(zip(
-                    results["ids"][0],
-                    results["documents"][0],
-                    results["metadatas"][0],
-                    results["distances"][0]
-                )):
-                    # Convert distance to similarity score (ChromaDB uses cosine distance)
-                    similarity_score = 1.0 - distance
+                documents_list = results.get("documents")
+                metadatas_list = results.get("metadatas")  
+                distances_list = results.get("distances")
+                ids_list = results.get("ids")
+                
+                if documents_list and metadatas_list and distances_list and ids_list:
+                    documents = documents_list[0] or []
+                    metadatas = metadatas_list[0] or []
+                    distances = distances_list[0] or []
+                    ids = ids_list[0] or []
                     
-                    # Filter by similarity threshold
-                    if similarity_score < self.similarity_threshold:
-                        continue
-                    
-                    # Reconstruct memory entry from metadata
-                    try:
-                        memory_entry = MemoryEntry(
-                            id=doc_id,
-                            case_id=metadata.get("case_id", ""),
-                            topic=metadata.get("topic", ""),
-                            timestamp=metadata.get("timestamp", time.time()),
-                            investigation_duration=metadata.get("investigation_duration", 0.0),
-                            total_sources=metadata.get("total_sources", 0),
-                            verification_status=metadata.get("verification_status", "pending"),
-                            tags=json.loads(metadata.get("tags", "[]")),
-                            mcp_tools_used=json.loads(metadata.get("mcp_tools", "[]"))
-                        )
+                    for i, (doc_id, document, metadata, distance) in enumerate(zip(
+                        ids, documents, metadatas, distances
+                    )):
+                        # Convert L2 distance to cosine similarity (for normalized embeddings)
+                        # ChromaDB uses L2 distance: L2_distance = 2 * (1 - cosine_similarity)
+                        # So: cosine_similarity = 1 - L2_distance/2
+                        similarity_score = max(0.0, min(1.0, 1.0 - (distance / 2.0)))
                         
-                        # Generate relevance explanation
-                        relevance_explanation = self._generate_relevance_explanation(
-                            query, memory_entry, similarity_score
-                        )
+                        # Filter by similarity threshold
+                        if similarity_score < self.similarity_threshold:
+                            continue
                         
-                        search_results.append(MemorySearchResult(
-                            entry=memory_entry,
-                            similarity_score=similarity_score,
-                            relevance_explanation=relevance_explanation
-                        ))
-                        
-                    except Exception as e:
-                        logger.warning(f"Failed to reconstruct memory entry {doc_id}: {e}")
-                        continue
+                        # Reconstruct memory entry from stored data
+                        try:
+                            if "full_entry" in metadata:
+                                # Use complete stored entry data for accurate reconstruction
+                                full_entry_str = metadata.get("full_entry")
+                                if isinstance(full_entry_str, str):
+                                    memory_entry = MemoryEntry.model_validate_json(full_entry_str)
+                                else:
+                                    # Handle unexpected type gracefully
+                                    logger.warning(f"Expected string for full_entry, got {type(full_entry_str)}")
+                                    continue
+                            else:
+                                # Fallback to partial reconstruction for older entries
+                                memory_entry = MemoryEntry(
+                                    id=doc_id,
+                                    case_id=str(metadata.get("case_id", "")),
+                                    topic=str(metadata.get("topic", "")),
+                                    timestamp=float(metadata.get("timestamp") or time.time()),
+                                    investigation_duration=float(metadata.get("investigation_duration") or 0.0),
+                                    total_sources=int(metadata.get("total_sources") or 0),
+                                    verification_status=str(metadata.get("verification_status", "pending")),
+                                    tags=json.loads(str(metadata.get("tags", "[]"))),
+                                    mcp_tools_used=json.loads(str(metadata.get("mcp_tools", "[]")))
+                                )
+                            
+                            # Apply case context filtering if provided
+                            if case_context:
+                                should_include = True
+                                for filter_key, filter_value in case_context.items():
+                                    if hasattr(memory_entry, filter_key):
+                                        entry_value = getattr(memory_entry, filter_key)
+                                        if entry_value != filter_value:
+                                            should_include = False
+                                            break
+                                    elif filter_key in metadata:
+                                        if metadata[filter_key] != filter_value:
+                                            should_include = False
+                                            break
+                                
+                                if not should_include:
+                                    continue
+                            
+                            # Generate relevance explanation
+                            relevance_explanation = self._generate_relevance_explanation(
+                                query, memory_entry, similarity_score
+                            )
+                            
+                            search_results.append(MemorySearchResult(
+                                entry=memory_entry,
+                                similarity_score=similarity_score,
+                                relevance_explanation=relevance_explanation
+                            ))
+                            
+                        except Exception as e:
+                            logger.warning(f"Failed to reconstruct memory entry {doc_id}: {e}")
+                            continue
             
             # Sort by similarity score
             search_results.sort(key=lambda x: x.similarity_score, reverse=True)
@@ -304,11 +375,25 @@ class VectorMemoryManager:
             # Update metrics
             if search_results:
                 self.metrics["successful_retrievals"] += 1
-                self.metrics["average_similarity"] = np.mean([r.similarity_score for r in search_results])
+                scores = [r.similarity_score for r in search_results]
+                self.metrics["average_similarity"] = float(np.mean(scores)) if scores else 0.0
             else:
                 self.metrics["failed_retrievals"] += 1
             
             logger.info(f"Found {len(search_results)} similar memories for query: {query[:100]}...")
+            if not search_results and self.similarity_threshold > self.min_similarity_threshold:
+                # Fallback: retry with min threshold (temporarily)
+                logger.warning(f"No results, retrying with min_similarity_threshold {self.min_similarity_threshold}")
+                original_threshold = self.similarity_threshold
+                self.similarity_threshold = self.min_similarity_threshold
+                try:
+                    fallback_results = await self.search_similar_memories(query, case_context, limit)
+                    return fallback_results
+                finally:
+                    # Restore original threshold
+                    self.similarity_threshold = original_threshold
+            if not search_results:
+                logger.warning(f"No similar memories found for query '{query}'. Even after fallback.")
             return search_results
             
         except Exception as e:
@@ -380,18 +465,30 @@ class VectorMemoryManager:
                 all_results = self.collection.get(include=["metadatas"])
                 memory_entries = []
                 
-                for metadata in all_results["metadatas"]:
-                    try:
-                        memory_entries.append(MemoryEntry(
-                            case_id=metadata.get("case_id", ""),
-                            topic=metadata.get("topic", ""),
-                            timestamp=metadata.get("timestamp", time.time()),
-                            tags=json.loads(metadata.get("tags", "[]")),
-                            mcp_tools_used=json.loads(metadata.get("mcp_tools", "[]"))
-                        ))
-                    except Exception as e:
-                        logger.warning(f"Failed to parse memory metadata: {e}")
-                        continue
+                metadatas = all_results.get("metadatas") if all_results else None
+                if metadatas:
+                    for metadata in metadatas:
+                        try:
+                            if "full_entry" in metadata:
+                                # Use complete stored entry data for accurate reconstruction
+                                full_entry_str = metadata.get("full_entry")
+                                if isinstance(full_entry_str, str):
+                                    memory_entry = MemoryEntry.model_validate_json(full_entry_str)
+                                else:
+                                    continue
+                            else:
+                                # Fallback to partial reconstruction for older entries
+                                memory_entry = MemoryEntry(
+                                    case_id=str(metadata.get("case_id", "")),
+                                    topic=str(metadata.get("topic", "")),
+                                    timestamp=float(metadata.get("timestamp") or time.time()),
+                                    tags=json.loads(str(metadata.get("tags", "[]"))),
+                                    mcp_tools_used=json.loads(str(metadata.get("mcp_tools", "[]")))
+                                )
+                            memory_entries.append(memory_entry)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse memory metadata: {e}")
+                            continue
             
             # Analyze patterns
             patterns = {
@@ -412,7 +509,10 @@ class VectorMemoryManager:
     
     def _analyze_common_topics(self, memories: List[MemoryEntry]) -> List[Dict[str, Any]]:
         """Analyze most common investigation topics."""
-        topic_counts = {}
+        if not memories:
+            return []
+            
+        topic_counts: Dict[str, int] = {}
         for memory in memories:
             topic = memory.topic.lower()
             topic_counts[topic] = topic_counts.get(topic, 0) + 1
@@ -424,7 +524,7 @@ class VectorMemoryManager:
     
     def _analyze_tool_usage(self, memories: List[MemoryEntry]) -> List[Dict[str, Any]]:
         """Analyze most frequently used MCP tools."""
-        tool_counts = {}
+        tool_counts: Dict[str, int] = {}
         for memory in memories:
             for tool in memory.mcp_tools_used:
                 tool_counts[tool] = tool_counts.get(tool, 0) + 1
@@ -442,7 +542,7 @@ class VectorMemoryManager:
         for memory in memories:
             strategies.extend(memory.successful_strategies)
         
-        strategy_counts = {}
+        strategy_counts: Dict[str, int] = {}
         for strategy in strategies:
             strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
         
@@ -461,13 +561,13 @@ class VectorMemoryManager:
         return {
             "earliest_investigation": min(timestamps),
             "latest_investigation": max(timestamps),
-            "average_duration": np.mean(durations) if durations else 0,
+            "average_duration": float(np.mean(durations)) if durations else 0.0,
             "investigations_per_day": len(memories) / max(1, (max(timestamps) - min(timestamps)) / 86400)
         }
     
     def _analyze_tag_distribution(self, memories: List[MemoryEntry]) -> List[Dict[str, Any]]:
         """Analyze distribution of investigation tags."""
-        tag_counts = {}
+        tag_counts: Dict[str, int] = {}
         for memory in memories:
             for tag in memory.tags:
                 tag_counts[tag] = tag_counts.get(tag, 0) + 1
@@ -488,10 +588,20 @@ class VectorMemoryManager:
                 "database_path": str(self.db_path)
             }
             
+            # Get embedding dimension safely
+            try:
+                embedding_dim: Optional[int] = self.embedding_model.get_sentence_embedding_dimension()
+            except AttributeError:
+                # Fallback for older versions
+                try:
+                    embedding_dim = len(self.embedding_model.encode("test"))
+                except Exception:
+                    embedding_dim = None
+            
             return {
                 **collection_stats,
                 **self.metrics,
-                "embedding_model": self.embedding_model.get_sentence_embedding_dimension(),
+                "embedding_model_dimension": embedding_dim,
                 "similarity_threshold": self.similarity_threshold,
                 "max_results": self.max_results
             }

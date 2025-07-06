@@ -21,6 +21,35 @@ const llmModelSelectEl = getEl('llm-model-select');
 const temperatureSliderEl = getEl('temperature-slider');
 const temperatureValueEl = getEl('temperature-value');
 
+// --- Enhanced Agent with Conversation Memory ---
+let currentConversationId = null;
+let conversationHistory = [];
+let cachedFindings = {};
+let isConversationMode = false;
+
+// Enhanced DOM Elements
+const startNewConversationBtn = getEl('start-new-conversation-btn');
+const loadConversationBtn = getEl('load-conversation-btn');
+const conversationIdInput = getEl('conversation-id-input');
+const loadConversationConfirmBtn = getEl('load-conversation-confirm-btn');
+const currentConversationInfo = getEl('current-conversation-info');
+const conversationIdDisplay = getEl('conversation-id-display');
+const conversationStats = getEl('conversation-stats');
+const conversationHistoryEl = getEl('conversation-history');
+const chatMessagesEl = getEl('chat-messages');
+const enhancedInputSection = getEl('enhanced-input-section');
+const enhancedResearchTopicEl = getEl('enhanced-research-topic');
+const sendEnhancedQueryBtn = getEl('send-enhanced-query-btn');
+const continueConversationBtn = getEl('continue-conversation-btn');
+const contextIndicator = getEl('context-indicator');
+const enhancedStatusSection = getEl('enhanced-status-section');
+const enhancedLiveLogEl = getEl('enhanced-live-log');
+const enhancedResultsSection = getEl('enhanced-results-section');
+const enhancedFindingsDisplayEl = getEl('enhanced-findings-display');
+const memoryStatsEl = getEl('memory-stats');
+const cachedFindingsEl = getEl('cached-findings');
+const cachedFindingsListEl = getEl('cached-findings-list');
+
 // --- Functions ---
 
 function resetUI() {
@@ -433,6 +462,325 @@ function enhanceStatusSection() {
     }
 }
 
+// --- Enhanced Agent Functions ---
+function resetEnhancedUI() {
+    currentConversationInfo.classList.add('hidden');
+    conversationHistoryEl.classList.add('hidden');
+    enhancedInputSection.classList.add('hidden');
+    enhancedStatusSection.classList.add('hidden');
+    enhancedResultsSection.classList.add('hidden');
+    cachedFindingsEl.classList.add('hidden');
+    contextIndicator.classList.add('hidden');
+    continueConversationBtn.classList.add('hidden');
+    chatMessagesEl.innerHTML = '';
+    enhancedLiveLogEl.innerHTML = '';
+    enhancedFindingsDisplayEl.innerHTML = '';
+    cachedFindingsListEl.innerHTML = '';
+    currentConversationId = null;
+    conversationHistory = [];
+    cachedFindings = {};
+    isConversationMode = false;
+}
+
+function logEnhancedMessage(message, type = 'status') {
+    const timestamp = new Date().toLocaleTimeString();
+    const p = document.createElement('p');
+    p.innerHTML = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+    p.className = `log-${type}`;
+    enhancedLiveLogEl.appendChild(p);
+    enhancedLiveLogEl.scrollTop = enhancedLiveLogEl.scrollHeight;
+}
+
+function addChatMessage(role, content, metadata = {}) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `chat-message ${role}`;
+    
+    const roleIcon = role === 'user' ? '👤' : role === 'assistant' ? '🤖' : '⚙️';
+    const timestamp = new Date().toLocaleTimeString();
+    
+    messageDiv.innerHTML = `
+        <div class="message-header">
+            <span class="role-icon">${roleIcon}</span>
+            <span class="role-name">${role.charAt(0).toUpperCase() + role.slice(1)}</span>
+            <span class="message-time">${timestamp}</span>
+        </div>
+        <div class="message-content">${content}</div>
+        ${metadata.case_id ? `<div class="message-meta">Case: ${metadata.case_id}</div>` : ''}
+    `;
+    
+    chatMessagesEl.appendChild(messageDiv);
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
+function updateConversationStats(stats) {
+    if (stats && conversationStats) {
+        const totalMessages = stats.total_messages || 0;
+        const cachedCount = stats.cached_findings_count || 0;
+        conversationStats.textContent = `${totalMessages} messages • ${cachedCount} cached findings`;
+    }
+}
+
+function displayMemoryStats(memoryInfo) {
+    if (!memoryInfo) return;
+    
+    const stats = memoryInfo.memory_optimization || {};
+    const cachedUtilized = stats.cached_findings_utilized || 0;
+    const newCached = stats.new_findings_cached || 0;
+    const contextScore = stats.context_reuse_score || 0;
+    
+    memoryStatsEl.innerHTML = `
+        <div class="memory-stat">
+            <span class="stat-label">Context Reuse Score:</span>
+            <span class="stat-value">${(contextScore * 100).toFixed(0)}%</span>
+        </div>
+        <div class="memory-stat">
+            <span class="stat-label">Cached Findings Used:</span>
+            <span class="stat-value">${cachedUtilized}</span>
+        </div>
+        <div class="memory-stat">
+            <span class="stat-label">New Findings Cached:</span>
+            <span class="stat-value">${newCached}</span>
+        </div>
+    `;
+}
+
+function displayCachedFindings(findings) {
+    if (!findings || Object.keys(findings).length === 0) {
+        cachedFindingsEl.classList.add('hidden');
+        return;
+    }
+    
+    cachedFindingsEl.classList.remove('hidden');
+    cachedFindingsListEl.innerHTML = '';
+    
+    Object.entries(findings).forEach(([key, finding]) => {
+        const findingDiv = document.createElement('div');
+        findingDiv.className = 'cached-finding-item';
+        
+        const content = typeof finding === 'object' ? finding.content || JSON.stringify(finding) : finding;
+        const truncatedContent = content.length > 150 ? content.substring(0, 150) + '...' : content;
+        
+        findingDiv.innerHTML = `
+            <div class="finding-key">${key}</div>
+            <div class="finding-content">${truncatedContent}</div>
+        `;
+        
+        cachedFindingsListEl.appendChild(findingDiv);
+    });
+}
+
+async function startNewConversation() {
+    try {
+        resetEnhancedUI();
+        logEnhancedMessage('🆕 Starting new conversation...', 'status');
+        
+        // Show the enhanced input immediately for new conversations
+        enhancedInputSection.classList.remove('hidden');
+        isConversationMode = true;
+        
+        logEnhancedMessage('✅ Ready for new conversation. Enter your query above.', 'success');
+        
+    } catch (error) {
+        console.error('Error starting new conversation:', error);
+        logEnhancedMessage(`❌ Error starting conversation: ${error.message}`, 'error');
+    }
+}
+
+async function loadConversation() {
+    const conversationId = conversationIdInput.value.trim();
+    if (!conversationId) {
+        alert('Please enter a conversation ID');
+        return;
+    }
+    
+    try {
+        logEnhancedMessage(`📁 Loading conversation ${conversationId}...`, 'status');
+        
+        const response = await fetch(`/conversation/${conversationId}/history`);
+        const result = await response.json();
+        
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to load conversation');
+        }
+        
+        const historyData = result.data;
+        currentConversationId = conversationId;
+        conversationHistory = historyData.messages || [];
+        cachedFindings = historyData.cached_findings || {};
+        
+        // Update UI
+        conversationIdDisplay.textContent = `ID: ${conversationId}`;
+        currentConversationInfo.classList.remove('hidden');
+        conversationHistoryEl.classList.remove('hidden');
+        enhancedInputSection.classList.remove('hidden');
+        continueConversationBtn.classList.remove('hidden');
+        contextIndicator.classList.remove('hidden');
+        isConversationMode = true;
+        
+        // Display conversation history
+        chatMessagesEl.innerHTML = '';
+        conversationHistory.forEach(msg => {
+            addChatMessage(msg.role, msg.content, msg.metadata || {});
+        });
+        
+        // Update stats
+        updateConversationStats(historyData.conversation_metadata);
+        displayCachedFindings(cachedFindings);
+        
+        // Hide load controls
+        conversationIdInput.classList.add('hidden');
+        loadConversationConfirmBtn.classList.add('hidden');
+        
+        logEnhancedMessage(`✅ Loaded conversation with ${conversationHistory.length} messages`, 'success');
+        
+    } catch (error) {
+        console.error('Error loading conversation:', error);
+        logEnhancedMessage(`❌ Error loading conversation: ${error.message}`, 'error');
+    }
+}
+
+async function sendEnhancedQuery() {
+    const topic = enhancedResearchTopicEl.value.trim();
+    if (!topic) {
+        alert('Please enter a query or investigation topic');
+        return;
+    }
+    
+    const model_id = llmModelSelectEl.value;
+    const temperature = parseFloat(temperatureSliderEl.value);
+    
+    try {
+        enhancedStatusSection.classList.remove('hidden');
+        enhancedResultsSection.classList.add('hidden');
+        sendEnhancedQueryBtn.disabled = true;
+        continueConversationBtn.disabled = true;
+        
+        // Add user message to chat
+        addChatMessage('user', topic, {});
+        
+        logEnhancedMessage('🚀 Starting enhanced investigation...', 'status');
+        
+        let endpoint, requestBody;
+        
+        if (currentConversationId) {
+            // Continue existing conversation
+            endpoint = '/enhanced_agent/continue';
+            requestBody = {
+                conversation_id: currentConversationId,
+                new_query: topic,
+                model_id: model_id,
+                temperature: temperature
+            };
+            logEnhancedMessage('🔄 Continuing existing conversation...', 'status');
+        } else {
+            // Start new conversation
+            endpoint = '/enhanced_agent/start';
+            requestBody = {
+                topic: topic,
+                model_id: model_id,
+                temperature: temperature
+            };
+            logEnhancedMessage('🆕 Starting new investigation...', 'status');
+        }
+        
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(requestBody)
+        });
+        
+        const result = await response.json();
+        
+        if (!result.success) {
+            throw new Error(result.error || 'Failed to run enhanced agent');
+        }
+        
+        const data = result.data;
+        
+        // Update conversation state
+        if (data.conversation_id) {
+            currentConversationId = data.conversation_id;
+            conversationIdDisplay.textContent = `ID: ${currentConversationId}`;
+            currentConversationInfo.classList.remove('hidden');
+            conversationHistoryEl.classList.remove('hidden');
+            continueConversationBtn.classList.remove('hidden');
+            
+            if (data.context_reuse_applied) {
+                contextIndicator.classList.remove('hidden');
+                logEnhancedMessage('🧠 Applied conversation context optimization', 'success');
+            }
+        }
+        
+        // Display results
+        enhancedResultsSection.classList.remove('hidden');
+        enhancedFindingsDisplayEl.innerHTML = `
+            <div class="findings-content">
+                <h4>🎯 Investigation Results</h4>
+                <div class="findings-text">${data.synthesized_findings || 'No findings available'}</div>
+                
+                ${data.synthesis_confidence ? `
+                <div class="confidence-section">
+                    <h5>📊 Confidence Assessment</h5>
+                    <p>${data.synthesis_confidence}</p>
+                </div>
+                ` : ''}
+                
+                ${data.planner_reasoning ? `
+                <div class="reasoning-section">
+                    <h5>🤔 Planning Reasoning</h5>
+                    <p>${data.planner_reasoning}</p>
+                </div>
+                ` : ''}
+            </div>
+        `;
+        
+        // Add assistant message to chat
+        const assistantMessage = `Investigation completed. Found ${data.search_quality_metrics?.total_results || 0} results with ${data.memory_optimization?.new_findings_cached || 0} new findings cached.`;
+        addChatMessage('assistant', assistantMessage, { case_id: data.case_id });
+        
+        // Display memory optimization info
+        if (data.memory_optimization) {
+            displayMemoryStats(data);
+        }
+        
+        // Update cached findings if available
+        if (data.cached_findings_count > 0) {
+            // Refresh conversation history to get updated cached findings
+            setTimeout(async () => {
+                try {
+                    const historyResponse = await fetch(`/conversation/${currentConversationId}/history`);
+                    const historyResult = await historyResponse.json();
+                    if (historyResult.success) {
+                        cachedFindings = historyResult.data.cached_findings || {};
+                        displayCachedFindings(cachedFindings);
+                        updateConversationStats(historyResult.data.conversation_metadata);
+                    }
+                } catch (e) {
+                    console.warn('Could not refresh cached findings:', e);
+                }
+            }, 1000);
+        }
+        
+        logEnhancedMessage('✅ Enhanced investigation completed successfully', 'success');
+        
+        // Clear input
+        enhancedResearchTopicEl.value = '';
+        
+    } catch (error) {
+        console.error('Error running enhanced agent:', error);
+        logEnhancedMessage(`❌ Error: ${error.message}`, 'error');
+        
+        // Add error message to chat
+        addChatMessage('system', `Error: ${error.message}`, {});
+        
+    } finally {
+        sendEnhancedQueryBtn.disabled = false;
+        continueConversationBtn.disabled = false;
+    }
+}
+
 // --- Event Listeners ---
 document.addEventListener('DOMContentLoaded', () => {
     populateModels();
@@ -465,6 +813,34 @@ startResearchBtn.addEventListener('click', () => {
 
 getEl('approve-btn').addEventListener('click', () => handleReview(true));
 getEl('reject-btn').addEventListener('click', () => handleReview(false));
+
+// Enhanced Agent Event Listeners
+startNewConversationBtn.addEventListener('click', startNewConversation);
+
+loadConversationBtn.addEventListener('click', () => {
+    conversationIdInput.classList.toggle('hidden');
+    loadConversationConfirmBtn.classList.toggle('hidden');
+    if (!conversationIdInput.classList.contains('hidden')) {
+        conversationIdInput.focus();
+    }
+});
+
+loadConversationConfirmBtn.addEventListener('click', loadConversation);
+
+conversationIdInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        loadConversation();
+    }
+});
+
+sendEnhancedQueryBtn.addEventListener('click', sendEnhancedQuery);
+continueConversationBtn.addEventListener('click', sendEnhancedQuery);
+
+enhancedResearchTopicEl.addEventListener('keypress', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        sendEnhancedQuery();
+    }
+});
 
 // Enhanced keyboard shortcuts
 document.addEventListener('keydown', (e) => {
